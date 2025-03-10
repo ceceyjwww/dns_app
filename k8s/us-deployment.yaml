@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: us-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: us
+  template:
+    metadata:
+      labels:
+        app: us
+    spec:
+      containers:
+      - name: us
+        image: us:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: us-service
+spec:
+  selector:
+    app: us
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: LoadBalancer 

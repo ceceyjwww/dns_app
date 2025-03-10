@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: as-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: as
+  template:
+    metadata:
+      labels:
+        app: as
+    spec:
+      containers:
+      - name: as
+        image: as:latest
+        imagePullPolicy: Never
+        ports:
+        - containerPort: 53533
+          protocol: UDP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: as-service
+spec:
+  selector:
+    app: as
+  ports:
+  - port: 53533
+    targetPort: 53533
+    protocol: UDP
+  type: ClusterIP 
