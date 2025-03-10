@@ -1,0 +1,148 @@
+from flask import Flask, request, jsonify
+import requests
+import socket
+import dns.resolver
+
+app = Flask(__name__)
+
+# Store the hostname, IP, AS IP, and AS port globally after registration
+registered_info = {
+    "hostname": None,
+    "ip": None,
+    "as_ip": None,
+    "as_port": None
+}
+
+def fibonacci(n):
+    """Compute the n-th Fibonacci number (basic iterative approach)."""
+    n_int = int(n)  # Assume prior check that n is integer
+    if n_int < 0:
+        return None
+    if n_int == 0:
+        return 0
+    elif n_int == 1:
+        return 1
+    a, b = 0, 1
+    for _ in range(2, n_int + 1):
+        a, b = b, a + b
+    return b
+
+def resolve_hostname(hostname, as_ip, as_port):
+    """Resolve hostname using the Authoritative Server."""
+    try:
+        # Create a UDP socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        
+        # Create DNS query message
+        dns_query = f"TYPE=A\nNAME={hostname}\nVALUE=\nTTL=10\n"
+        
+        # Send query to AS
+        sock.sendto(dns_query.encode("utf-8"), (as_ip, int(as_port)))
+        
+        # Receive response
+        data, _ = sock.recvfrom(1024)
+        response = data.decode("utf-8")
+        
+        # Parse response to get IP
+        for line in response.split('\n'):
+            if line.startswith('VALUE='):
+                return line.split('=')[1]
+                
+        return None
+    except Exception as e:
+        print(f"Error in DNS resolution: {e}")
+        return None
+    finally:
+        sock.close()
+
+@app.route("/register", methods=["PUT"])
+def register():
+    """
+    Body JSON e.g.:
+    {
+       "hostname": "fibonacci.com",
+       "ip": "172.18.0.2",
+       "as_ip": "10.9.10.2",
+       "as_port": "30001"
+    }
+    """
+    data = request.get_json()
+    if not data:
+        return "Bad Request", 400
+    
+    # Extract fields from body
+    hostname = data.get("hostname")
+    ip = data.get("ip")
+    as_ip = data.get("as_ip")
+    as_port = data.get("as_port")
+    
+    if not all([hostname, ip, as_ip, as_port]):
+        return "Missing fields", 400
+    
+    # Store them in the global dict
+    registered_info["hostname"] = hostname
+    registered_info["ip"] = ip
+    registered_info["as_ip"] = as_ip
+    registered_info["as_port"] = as_port
+
+    # 1) Build the DNS registration message
+    # Format lines with newline:
+    #   TYPE=A
+    #   NAME=hostname
+    #   VALUE=ip
+    #   TTL=10
+    dns_registration = f"TYPE=A\nNAME={hostname}\nVALUE={ip}\nTTL=10\n"
+
+    # 2) Send over UDP to AS on port 53533
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.sendto(dns_registration.encode("utf-8"), (as_ip, 53533))
+    except Exception as e:
+        print("Error in sending DNS registration", e)
+        return "Server Error", 500
+    finally:
+        sock.close()
+
+    # Return 201 on success
+    return "", 201
+
+@app.route("/fibonacci", methods=["GET"])
+def get_fib():
+    """
+    Query params: /fibonacci?hostname=fibonacci.com&fs_port=K&number=X&as_ip=Y&as_port=Z
+    """
+    # Get all required parameters
+    hostname = request.args.get("hostname")
+    fs_port = request.args.get("fs_port")
+    number = request.args.get("number")
+    as_ip = request.args.get("as_ip")
+    as_port = request.args.get("as_port")
+    
+    # Check if all parameters are present
+    if not all([hostname, fs_port, number, as_ip, as_port]):
+        return "Missing required parameters", 400
+    
+    # Validate number parameter
+    try:
+        val = int(number)
+    except ValueError:
+        return "Bad format: number is not an integer", 400
+    
+    # Resolve hostname to IP
+    fs_ip = resolve_hostname(hostname, as_ip, as_port)
+    if not fs_ip:
+        return "Failed to resolve hostname", 500
+    
+    # Make request to Fibonacci Server
+    try:
+        response = requests.get(f"http://{fs_ip}:{fs_port}/fibonacci?number={val}")
+        if response.status_code == 200:
+            return response.text, 200
+        else:
+            return f"Error from Fibonacci Server: {response.text}", response.status_code
+    except requests.exceptions.RequestException as e:
+        return f"Error connecting to Fibonacci Server: {str(e)}", 500
+
+if __name__ == "__main__":
+    # US runs on port 8080
+    app.run(host="0.0.0.0", port=8080)
